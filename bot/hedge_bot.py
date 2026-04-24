@@ -162,16 +162,38 @@ def get_open_trades_count():
     return result['count'] if result else 0
 
 def get_active_markets():
-    """Fetch active markets from Polymarket"""
+    """Fetch active markets from Polymarket Gamma API with pagination"""
     import requests
     
-    url = "https://clob.polymarket.com/markets"
     headers = {"Accept": "application/json"}
+    all_markets = []
+    offset = 0
+    limit = 500
     
     try:
-        response = requests.get(url, headers=headers, timeout=30)
-        if response.status_code == 200:
-            return response.json()
+        while True:
+            url = f"https://gamma-api.polymarket.com/markets?closed=false&active=true&limit={limit}&offset={offset}"
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code != 200:
+                logger.error(f"Gamma API error: {response.status_code}")
+                break
+            
+            batch = response.json()
+            if not batch:
+                break
+            
+            all_markets.extend(batch)
+            
+            # If batch is smaller than limit, we've got all markets
+            if len(batch) < limit:
+                break
+            
+            offset += limit
+        
+        logger.info(f"Fetched {len(all_markets)} total markets from Gamma API")
+        return all_markets
+        
     except Exception as e:
         logger.error(f"Error fetching markets: {e}")
     
@@ -259,14 +281,8 @@ class HedgeBot:
             if not pending_trades:
                 return
             
-            # Get current prices for each pending trade
-            url = "https://clob.polymarket.com/markets?closed=false"
-            response = requests.get(url, headers={"Accept": "application/json"}, timeout=30)
-            
-            if response.status_code != 200:
-                return
-            
-            all_markets = response.json()
+            # Get current market prices
+            all_markets = get_active_markets()
             
             for trade in pending_trades:
                 token = trade['token']
@@ -283,13 +299,9 @@ class HedgeBot:
                 if not market_data:
                     continue
                 
-                # Get outcomes from tokens field
-                tokens = market_data.get('tokens', [])
-                if len(tokens) != 2:
-                    continue
-                
-                outcomes = [tokens[0].get('outcome'), tokens[1].get('outcome')]
-                prices = [tokens[0].get('price'), tokens[1].get('price')]
+                # Get outcomes and prices (Gamma API format)
+                outcomes = market_data.get('outcomes', [])
+                prices = market_data.get('outcomePrices', [])
                 
                 # Find opposite outcome
                 try:
@@ -372,29 +384,18 @@ class HedgeBot:
                 logger.error(f"Failed to fetch markets: {response.status_code}")
                 return
             
-            data = response.json()
-            
-            # Handle both list and dict responses from API
-            if isinstance(data, dict):
-                all_markets = data.get('data', data.get('markets', data.get('items', [])))
-            else:
-                all_markets = data
-            
-            # Filter only markets accepting orders
-            all_markets = [m for m in all_markets if m.get('accepting_orders') == True]
-            
-            logger.info(f"Found {len(all_markets)} markets accepting orders")
+            all_markets = get_active_markets()
+            logger.info(f"Found {len(all_markets)} active markets")
             
             # Filter markets
             for market in all_markets:
                 try:
-                    # Get outcomes from tokens field
-                    tokens = market.get('tokens', [])
-                    if len(tokens) != 2:
-                        continue
+                    # Get outcomes and prices (Gamma API format)
+                    outcomes = market.get('outcomes', [])
+                    prices = market.get('outcomePrices', [])
                     
-                    outcomes = [tokens[0].get('outcome'), tokens[1].get('outcome')]
-                    prices = [tokens[0].get('price'), tokens[1].get('price')]
+                    if len(outcomes) != 2 or len(prices) != 2:
+                        continue
                     
                     # Check volume
                     volume = float(market.get('volume24hr', 0) or 0)
