@@ -313,9 +313,15 @@ class HedgeBot:
                 if not market_data:
                     continue
                 
-                # Get outcomes and prices (Gamma API format)
+                # Get outcomes and prices (Gamma API - may be JSON string)
                 outcomes = market_data.get('outcomes', [])
                 prices = market_data.get('outcomePrices', [])
+                if isinstance(outcomes, str):
+                    try: outcomes = json.loads(outcomes)
+                    except: continue
+                if isinstance(prices, str):
+                    try: prices = json.loads(prices)
+                    except: continue
                 
                 # Find opposite outcome
                 try:
@@ -404,11 +410,24 @@ class HedgeBot:
             # Filter markets
             for market in all_markets:
                 try:
-                    # Get outcomes and prices (Gamma API format)
+                    # Get outcomes and prices (Gamma API - outcomePrices may be JSON string)
                     outcomes = market.get('outcomes', [])
-                    prices = market.get('outcomePrices', [])
+                    raw_prices = market.get('outcomePrices', [])
                     
-                    if len(outcomes) != 2 or len(prices) != 2:
+                    # outcomePrices can be a JSON-encoded string like '["0.65","0.35"]'
+                    if isinstance(raw_prices, str):
+                        try:
+                            raw_prices = json.loads(raw_prices)
+                        except:
+                            continue
+                    
+                    if isinstance(outcomes, str):
+                        try:
+                            outcomes = json.loads(outcomes)
+                        except:
+                            continue
+                    
+                    if len(outcomes) != 2 or len(raw_prices) != 2:
                         continue
                     
                     # Check volume
@@ -418,8 +437,8 @@ class HedgeBot:
                     
                     # Parse prices
                     try:
-                        price0 = float(prices[0])
-                        price1 = float(prices[1])
+                        price0 = float(raw_prices[0])
+                        price1 = float(raw_prices[1])
                     except:
                         continue
                     
