@@ -434,6 +434,7 @@ class HedgeBot:
     
     def scan_and_trade(self, settings):
         """Scan markets and execute hedge strategy"""
+        import requests
         open_count = get_open_trades_count()
         max_concurrent = int(settings.get('max_concurrent_trades', 5))
         
