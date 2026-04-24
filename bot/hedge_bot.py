@@ -374,11 +374,14 @@ class HedgeBot:
             
             # Handle both list and dict responses from API
             if isinstance(data, dict):
-                all_markets = data.get('markets', data.get('items', []))
+                all_markets = data.get('data', data.get('markets', data.get('items', [])))
             else:
                 all_markets = data
             
-            logger.info(f"Found {len(all_markets)} total markets")
+            # Filter only active markets
+            all_markets = [m for m in all_markets if m.get('active') == True and m.get('closed') == False]
+            
+            logger.info(f"Found {len(all_markets)} active markets")
             
             # Filter markets
             for market in all_markets:
