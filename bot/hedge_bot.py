@@ -130,6 +130,29 @@ def get_activities(limit=50):
     conn.close()
     return [dict(row) for row in rows]
 
+# Helper functions for logging trade events
+def log_trade_success(market, outcome, price, shares, usdc):
+    """Log successful trade"""
+    log_activity('success', f'Bought {outcome} @ ${price:.2f}', {
+        'market': market[:50],
+        'shares': shares,
+        'usdc': usdc
+    })
+
+def log_trade_failed(market, outcome, reason):
+    """Log failed trade"""
+    log_activity('failed', f'Failed to buy {outcome}', {
+        'market': market[:50],
+        'reason': reason
+    })
+
+def log_limit_order(market, outcome, price, shares):
+    """Log limit order placed"""
+    log_activity('order', f'Limit order: {outcome} @ ${price:.2f}', {
+        'market': market[:50],
+        'shares': shares
+    })
+
 def get_open_trades_count():
     conn = get_db()
     cursor = conn.cursor()
