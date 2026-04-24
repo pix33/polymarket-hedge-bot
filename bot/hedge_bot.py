@@ -364,10 +364,32 @@ def api_toggle():
     
     if not current:
         bot.start()
+        log_activity('success', 'Bot started', {'enabled': True})
     else:
         bot.stop()
+        log_activity('info', 'Bot stopped', {'enabled': False})
     
     return jsonify({'enabled': not current})
+
+@app.route('/api/activity', methods=['GET'])
+def api_activity():
+    """Get activity log"""
+    activities = get_activities(50)
+    return jsonify(activities)
+
+@app.route('/api/activity', methods=['POST'])
+def api_log_activity():
+    """Manually log activity"""
+    data = request.json
+    log_activity(
+        data.get('type', 'info'),
+        data.get('message', ''),
+        data.get('details')
+    )
+    return jsonify({'success': True})
+
+# Log initial startup
+log_activity('info', 'Hedge bot started', {'version': '1.0'})
 
 if __name__ == '__main__':
     app.run(host=HOST, port=PORT, debug=False)
