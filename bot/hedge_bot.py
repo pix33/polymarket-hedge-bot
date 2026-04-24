@@ -229,21 +229,39 @@ def get_market_details(token):
     
     return None
 
+_clob_client = None
+
 def get_clob_client():
-    """Initialize and return a CLOB client using the private key."""
+    """Initialize and return a CLOB client (cached, with derived API creds)."""
+    global _clob_client
+    if _clob_client:
+        return _clob_client
+
     from py_clob_client.client import ClobClient
     from py_clob_client.constants import POLYGON
+
     key = PRIVATE_KEY.strip()
     if not key.startswith('0x'):
         key = '0x' + key
-    client = ClobClient(
+
+    # Step 1: derive API creds from private key
+    base_client = ClobClient(
         host="https://clob.polymarket.com",
-        key=key,
         chain_id=POLYGON,
-        signature_type=0,
-        funder=None,
+        key=key,
     )
-    return client
+    creds = base_client.create_or_derive_api_creds()
+
+    # Step 2: full client with creds and sig_type=0 (EOA)
+    _clob_client = ClobClient(
+        host="https://clob.polymarket.com",
+        chain_id=POLYGON,
+        key=key,
+        creds=creds,
+        signature_type=0,
+    )
+    logger.info(f"✅ CLOB client initialized — wallet: {_clob_client.get_address()}")
+    return _clob_client
 
 def place_order(token_id, price, amount_usdc):
     """Place a real limit buy order on Polymarket CLOB. Returns order_id or None."""
