@@ -233,8 +233,6 @@ def index():
     cursor.execute("SELECT COUNT(*) as open_count FROM trades WHERE status IN ('pending_second', 'open')")
     open_trades = cursor.fetchone()['open_count']
     
-    conn.close()
-    
     # Get stats
     cursor.execute('''
         SELECT 
@@ -258,6 +256,8 @@ def index():
         'total_pnl': total_pnl,
         'total_spent': total_spent
     }
+    
+    conn.close()
     
     return render_template('index.html', 
                          settings=settings, 
