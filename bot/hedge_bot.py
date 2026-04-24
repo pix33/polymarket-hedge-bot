@@ -370,7 +370,14 @@ class HedgeBot:
                 logger.error(f"Failed to fetch markets: {response.status_code}")
                 return
             
-            all_markets = response.json()
+            data = response.json()
+            
+            # Handle both list and dict responses from API
+            if isinstance(data, dict):
+                all_markets = data.get('markets', data.get('items', []))
+            else:
+                all_markets = data
+            
             logger.info(f"Found {len(all_markets)} total markets")
             
             # Filter markets
