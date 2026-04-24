@@ -77,6 +77,17 @@ def init_db():
     for key, value in defaults.items():
         cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', (key, value))
     
+    # Activity log table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            details TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -94,6 +105,30 @@ def update_setting(key, value):
     cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, str(value)))
     conn.commit()
     conn.close()
+
+def log_activity(activity_type, message, details=None):
+    """Log an activity event"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO activity_log (activity_type, message, details) VALUES (?, ?, ?)',
+        (activity_type, message, json.dumps(details) if details else None)
+    )
+    conn.commit()
+    conn.close()
+
+def get_activities(limit=50):
+    """Get recent activities"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM activity_log 
+        ORDER BY created_at DESC 
+        LIMIT ?
+    ''', (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_open_trades_count():
     conn = get_db()
@@ -259,12 +294,16 @@ def index():
     
     conn.close()
     
+    # Get activities
+    activities = get_activities(50)
+    
     return render_template('index.html', 
                          settings=settings, 
                          trades=trades,
                          total_trades=total_trades,
                          open_trades=open_trades,
-                         stats=stats)
+                         stats=stats,
+                         activities=activities)
 
 @app.route('/api/settings', methods=['POST'])
 def api_settings():
