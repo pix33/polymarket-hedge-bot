@@ -534,27 +534,52 @@ class HedgeBot:
                     if not clob_token_ids or len(clob_token_ids) < 2:
                         continue
                     
-                    # Check if first leg is in range and not already entered
+                    # Determine which side (if any) is in the first leg range
+                    candidate_token = None
+                    candidate_outcome = None
+                    candidate_idx = None
+
                     if first_leg_min <= price0 <= first_leg_max:
-                        token_id = clob_token_ids[0]
-                        if token_id in already_entered:
-                            continue
-                        outcome = outcomes[0]
-                        already_entered.add(token_id)
-                        self.place_first_leg(market_question, token_id, outcome, price0, trade_amount, settings)
-                        open_count += 1
-                        if open_count >= max_concurrent:
-                            break
+                        candidate_token = clob_token_ids[0]
+                        candidate_outcome = outcomes[0]
+                        candidate_idx = 0
                     elif first_leg_min <= price1 <= first_leg_max:
-                        token_id = clob_token_ids[1]
-                        if token_id in already_entered:
+                        candidate_token = clob_token_ids[1]
+                        candidate_outcome = outcomes[1]
+                        candidate_idx = 1
+
+                    if not candidate_token or candidate_token in already_entered:
+                        continue
+
+                    # Fetch live orderbook — use the best ask as our actual order price
+                    try:
+                        ob_resp = requests.get(
+                            "https://clob.polymarket.com/book",
+                            params={'token_id': candidate_token},
+                            timeout=5
+                        )
+                        if ob_resp.status_code != 200:
                             continue
-                        outcome = outcomes[1]
-                        already_entered.add(token_id)
-                        self.place_first_leg(market_question, token_id, outcome, price1, trade_amount, settings)
-                        open_count += 1
-                        if open_count >= max_concurrent:
-                            break
+                        ob = ob_resp.json()
+                        asks = ob.get('asks', [])
+                        if not asks:
+                            continue
+                        best_ask = min(float(a['price']) for a in asks)
+                    except Exception as e:
+                        logger.debug(f"Orderbook fetch error: {e}")
+                        continue
+
+                    # Confirm the live ask is still within our range
+                    if not (first_leg_min <= best_ask <= first_leg_max):
+                        logger.info(f"Ask {best_ask} out of range for {candidate_outcome} — skipping")
+                        continue
+
+                    logger.info(f"Ask confirmed: {candidate_outcome} @ ${best_ask} (mid was ${float(raw_prices[candidate_idx]):.3f})")
+                    already_entered.add(candidate_token)
+                    self.place_first_leg(market_question, candidate_token, candidate_outcome, best_ask, trade_amount, settings)
+                    open_count += 1
+                    if open_count >= max_concurrent:
+                        break
                         
                 except Exception as e:
                     logger.error(f"Error processing market: {e}")
