@@ -767,6 +767,26 @@ def api_log_activity():
     )
     return jsonify({'success': True})
 
+@app.route('/api/wallet_positions')
+def api_wallet_positions():
+    """Get real wallet positions from Polymarket data API."""
+    import requests as req
+    try:
+        client = get_clob_client()
+        wallet = client.get_address()
+        resp = req.get(
+            f"https://data-api.polymarket.com/positions?user={wallet}&limit=100&sizeThreshold=0",
+            timeout=10
+        )
+        positions = resp.json() if resp.status_code == 200 else []
+        return jsonify({
+            'wallet': wallet,
+            'positions': positions,
+            'count': len(positions)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # Log initial startup
 log_activity('info', 'Hedge bot started', {'version': '1.0'})
 

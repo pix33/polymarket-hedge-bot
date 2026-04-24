@@ -225,6 +225,11 @@
             color: #fff;
         }
         
+        .status.cancelled {
+            background: #555;
+            color: #aaa;
+        }
+        
         .empty-state {
             text-align: center;
             padding: 40px;
@@ -344,6 +349,13 @@
         </div>
         
         <div class="card">
+            <h2>💰 Live Wallet Holdings <span id="wallet-addr" style="font-size:12px;color:#888;font-weight:normal;"></span> <button onclick="loadWallet()" style="margin-left:10px;padding:6px 14px;font-size:13px;">↻ Refresh</button></h2>
+            <div id="wallet-positions">
+                <div class="empty-state">Loading wallet positions...</div>
+            </div>
+        </div>
+
+        <div class="card">
             <h2>📋 Activity Log</h2>
             {% if activities %}
             <table>
@@ -387,6 +399,45 @@
             document.getElementById('status-text').textContent = data.enabled ? 'Running' : 'Stopped';
         });
         
+        async function loadWallet() {
+            document.getElementById('wallet-positions').innerHTML = '<div class="empty-state">Loading...</div>';
+            try {
+                const resp = await fetch('/api/wallet_positions');
+                const data = await resp.json();
+                document.getElementById('wallet-addr').textContent = data.wallet ? '(' + data.wallet.slice(0,8) + '...' + data.wallet.slice(-4) + ')' : '';
+                const positions = data.positions || [];
+                if (positions.length === 0) {
+                    document.getElementById('wallet-positions').innerHTML = '<div class="empty-state">No open positions in wallet</div>';
+                    return;
+                }
+                let html = '<table><thead><tr><th>Market</th><th>Outcome</th><th>Shares</th><th>Avg Price</th><th>Current Value</th><th>P&L</th></tr></thead><tbody>';
+                for (const p of positions) {
+                    const title = (p.title || '').slice(0, 55);
+                    const size = parseFloat(p.size || 0).toFixed(2);
+                    const avgPrice = parseFloat(p.avgPrice || 0).toFixed(3);
+                    const curVal = parseFloat(p.currentValue || 0).toFixed(2);
+                    const initVal = parseFloat(p.initialValue || p.cashBalanceDelta || 0);
+                    const pnl = (parseFloat(p.currentValue || 0) - Math.abs(initVal)).toFixed(2);
+                    const pnlClass = parseFloat(pnl) >= 0 ? 'positive' : 'negative';
+                    html += `<tr>
+                        <td title="${p.title || ''}">${title}${(p.title||'').length > 55 ? '...' : ''}</td>
+                        <td>${p.outcome || '-'}</td>
+                        <td>${size}</td>
+                        <td>$${avgPrice}</td>
+                        <td>$${curVal}</td>
+                        <td class="${pnlClass}">$${pnl}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                document.getElementById('wallet-positions').innerHTML = html;
+            } catch(e) {
+                document.getElementById('wallet-positions').innerHTML = '<div class="empty-state">Error loading wallet: ' + e + '</div>';
+            }
+        }
+
+        // Load wallet on page load
+        loadWallet();
+
         async function saveSettings() {
             const settings = {
                 first_leg_min_price: document.getElementById('first_leg_min_price').value,
