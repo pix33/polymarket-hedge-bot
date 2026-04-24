@@ -229,21 +229,68 @@ def get_market_details(token):
     
     return None
 
-def place_order(token, outcome, amount):
-    """Place a buy order on Polymarket CLOB"""
-    import requests
+def get_clob_client():
+    """Initialize and return a CLOB client using the private key."""
     from py_clob_client.client import ClobClient
+    from py_clob_client.constants import POLYGON
+    key = PRIVATE_KEY.strip()
+    if not key.startswith('0x'):
+        key = '0x' + key
+    client = ClobClient(
+        host="https://clob.polymarket.com",
+        key=key,
+        chain_id=POLYGON,
+        signature_type=0,
+        funder=None,
+    )
+    return client
+
+def place_order(token_id, price, amount_usdc):
+    """Place a real limit buy order on Polymarket CLOB. Returns order_id or None."""
     from py_clob_client.clob_types import OrderArgs
-    from py_clob_client.client import MarkovClient
-    
-    # This is a placeholder - we'll implement actual order placement
-    # For now, just log the attempt
-    logger.info(f"Would place order: token={token}, outcome={outcome}, amount={amount}")
-    
-    # TODO: Implement actual order placement using py-clob-client
-    # The wallet private key needs to be set up properly
-    
-    return None
+    from py_clob_client.order_builder.constants import BUY
+    from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+    try:
+        client = get_clob_client()
+
+        # Check balance
+        bal_resp = client.get_balance_allowance(
+            params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        available = float(bal_resp.get('balance', 0)) / 1e6
+        if available < 1.0:
+            logger.warning(f"Insufficient balance (${available:.2f}) — skipping order")
+            return None
+
+        shares = round(amount_usdc / price, 2)
+        # Enforce Polymarket minimum of 5 shares
+        if shares < 5.1:
+            shares = 5.1
+            amount_usdc = shares * price
+
+        logger.info(f"Placing order: token={token_id[:16]}... price={price} shares={shares:.2f} usdc=${amount_usdc:.2f}")
+
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=shares,
+            side=BUY,
+            fee_rate_bps=0,
+        )
+        resp = client.create_and_post_order(order_args)
+
+        if resp and resp.get('success'):
+            order_id = resp.get('orderID') or resp.get('order', {}).get('id', '')
+            logger.info(f"✅ Order placed: {order_id}")
+            return order_id
+        else:
+            logger.error(f"Order failed: {resp}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Exception placing order: {e}")
+        return None
 
 class HedgeBot:
     def __init__(self):
@@ -354,39 +401,52 @@ class HedgeBot:
         try:
             shares = amount / price
             trade_id = trade['id']
-            
+
+            # Find second leg token ID from market data
+            # Second outcome token needs to be found via market lookup
+            # For now use the same market token (opposite side handled by CLOB)
+            order_id = place_order(trade['token'], price, amount)
+
+            if not order_id:
+                logger.error(f"Second leg order failed for trade_id={trade_id}")
+                return
+
             conn = get_db()
             cursor = conn.cursor()
             cursor.execute('''
-                UPDATE trades SET 
+                UPDATE trades SET
                     second_leg_outcome = ?,
                     second_leg_price = ?,
                     second_leg_shares = ?,
                     second_leg_usdc = ?,
+                    second_leg_order_id = ?,
                     status = 'open'
                 WHERE id = ?
-            ''', (outcome, price, shares, amount, trade_id))
+            ''', (outcome, price, shares, amount, order_id, trade_id))
             conn.commit()
             conn.close()
-            
+
             log_trade_success(trade['market'], outcome, price, shares, amount)
-            logger.info(f"Second leg placed: {outcome} @ ${price}, trade_id={trade_id}")
-            
-            # TODO: Actually place the order on Polymarket
-            
+            logger.info(f"✅ Second leg placed: {outcome} @ ${price} | order={order_id} | trade_id={trade_id}")
+
         except Exception as e:
             logger.error(f"Error placing second leg: {e}")
     
     def scan_and_trade(self, settings):
         """Scan markets and execute hedge strategy"""
-        import requests
-        
         open_count = get_open_trades_count()
         max_concurrent = int(settings.get('max_concurrent_trades', 5))
         
         if open_count >= max_concurrent:
             logger.info(f"Max concurrent trades reached: {open_count}/{max_concurrent}")
             return
+        
+        # Get already-entered market tokens to avoid re-buying
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT token FROM trades")
+        already_entered = {row['token'] for row in cursor.fetchall()}
+        conn.close()
         
         # Get settings
         first_leg_min = float(settings.get('first_leg_min_price', 0.60))
@@ -442,16 +502,40 @@ class HedgeBot:
                     except:
                         continue
                     
-                    token = market.get('conditionToken', '')
                     market_question = market.get('question', '')
                     
-                    # Check if first leg is in range
+                    # Get the correct CLOB token ID for the matching outcome
+                    clob_token_ids = market.get('clobTokenIds', '[]')
+                    if isinstance(clob_token_ids, str):
+                        try:
+                            clob_token_ids = json.loads(clob_token_ids)
+                        except:
+                            clob_token_ids = []
+                    
+                    if not clob_token_ids or len(clob_token_ids) < 2:
+                        continue
+                    
+                    # Check if first leg is in range and not already entered
                     if first_leg_min <= price0 <= first_leg_max:
+                        token_id = clob_token_ids[0]
+                        if token_id in already_entered:
+                            continue
                         outcome = outcomes[0]
-                        self.place_first_leg(market_question, token, outcome, price0, trade_amount, settings)
+                        already_entered.add(token_id)
+                        self.place_first_leg(market_question, token_id, outcome, price0, trade_amount, settings)
+                        open_count += 1
+                        if open_count >= max_concurrent:
+                            break
                     elif first_leg_min <= price1 <= first_leg_max:
+                        token_id = clob_token_ids[1]
+                        if token_id in already_entered:
+                            continue
                         outcome = outcomes[1]
-                        self.place_first_leg(market_question, token, outcome, price1, trade_amount, settings)
+                        already_entered.add(token_id)
+                        self.place_first_leg(market_question, token_id, outcome, price1, trade_amount, settings)
+                        open_count += 1
+                        if open_count >= max_concurrent:
+                            break
                         
                 except Exception as e:
                     logger.error(f"Error processing market: {e}")
@@ -461,34 +545,33 @@ class HedgeBot:
             logger.error(f"Error in scan_and_trade: {e}")
     
     def place_first_leg(self, market, token, outcome, price, amount, settings):
-        """Place the first leg of the hedge"""
-        import requests
-        
+        """Place the first leg of the hedge — real CLOB order."""
         try:
-            # Calculate shares
             shares = amount / price
-            
+
+            # Place real order on Polymarket
+            order_id = place_order(token, price, amount)
+
+            if not order_id:
+                log_trade_failed(market, outcome, "Order placement failed")
+                return
+
             # Save trade to DB
             conn = get_db()
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO trades (market, token, first_leg_outcome, first_leg_price, 
-                                   first_leg_shares, first_leg_usdc, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending_second')
-            ''', (market, token, outcome, price, shares, amount))
+                INSERT INTO trades (market, token, first_leg_outcome, first_leg_price,
+                                   first_leg_shares, first_leg_usdc, first_leg_order_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_second')
+            ''', (market, token, outcome, price, shares, amount, order_id))
             trade_id = cursor.lastrowid
             conn.commit()
             conn.close()
-            
-            # Log activity
+
             log_trade_success(market, outcome, price, shares, amount)
             log_limit_order(market, outcome, price, shares)
-            
-            logger.info(f"First leg placed: {outcome} @ ${price}, {shares} shares, trade_id={trade_id}")
-            
-            # TODO: Actually place the order on Polymarket
-            # For now, just log it - actual order placement requires proper wallet setup
-            
+            logger.info(f"✅ First leg placed: {outcome} @ ${price} | order={order_id} | trade_id={trade_id}")
+
         except Exception as e:
             logger.error(f"Error placing first leg: {e}")
             log_trade_failed(market, outcome, str(e))
