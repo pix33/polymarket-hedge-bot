@@ -283,11 +283,13 @@ class HedgeBot:
                 if not market_data:
                     continue
                 
-                outcomes = market_data.get('outcomes', [])
-                prices = market_data.get('outcomePrices', [])
-                
-                if len(outcomes) != 2 or len(prices) != 2:
+                # Get outcomes from tokens field
+                tokens = market_data.get('tokens', [])
+                if len(tokens) != 2:
                     continue
+                
+                outcomes = [tokens[0].get('outcome'), tokens[1].get('outcome')]
+                prices = [tokens[0].get('price'), tokens[1].get('price')]
                 
                 # Find opposite outcome
                 try:
@@ -378,27 +380,25 @@ class HedgeBot:
             else:
                 all_markets = data
             
-            # Filter only active markets
-            all_markets = [m for m in all_markets if m.get('active') == True and m.get('closed') == False]
+            # Filter only markets accepting orders
+            all_markets = [m for m in all_markets if m.get('accepting_orders') == True]
             
-            logger.info(f"Found {len(all_markets)} active markets")
+            logger.info(f"Found {len(all_markets)} markets accepting orders")
             
             # Filter markets
             for market in all_markets:
                 try:
-                    # Skip if not 2 outcomes
-                    outcomes = market.get('outcomes', [])
-                    if len(outcomes) != 2:
+                    # Get outcomes from tokens field
+                    tokens = market.get('tokens', [])
+                    if len(tokens) != 2:
                         continue
+                    
+                    outcomes = [tokens[0].get('outcome'), tokens[1].get('outcome')]
+                    prices = [tokens[0].get('price'), tokens[1].get('price')]
                     
                     # Check volume
                     volume = float(market.get('volume24hr', 0) or 0)
                     if volume < min_volume:
-                        continue
-                    
-                    # Get prices
-                    prices = market.get('outcomePrices', [])
-                    if not prices or len(prices) != 2:
                         continue
                     
                     # Parse prices
