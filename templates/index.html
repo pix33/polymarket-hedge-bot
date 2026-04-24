@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket Hedge Bot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #00d4ff;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+        
+        h2 {
+            color: #00d4ff;
+            margin: 20px 0 15px;
+            font-size: 20px;
+        }
+        
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #0f3460;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-box {
+            background: #0f3460;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+        
+        .stat-label {
+            color: #888;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        .positive { color: #00ff88; }
+        .negative { color: #ff4444; }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        label {
+            color: #aaa;
+            font-size: 14px;
+        }
+        
+        input[type="number"], input[type="text"] {
+            background: #0f3460;
+            border: 1px solid #1a4a7a;
+            color: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        
+        .range-display {
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 15px;
+        }
+        
+        button:hover {
+            background: #00b8e6;
+            transform: translateY(-2px);
+        }
+        
+        button.danger {
+            background: #ff4444;
+            color: #fff;
+        }
+        
+        button.success {
+            background: #00ff88;
+            color: #1a1a2e;
+        }
+        
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .toggle {
+            width: 60px;
+            height: 30px;
+            background: #0f3460;
+            border-radius: 15px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .toggle.active {
+            background: #00ff88;
+        }
+        
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 26px;
+            height: 26px;
+            background: #fff;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.3s;
+        }
+        
+        .toggle.active::after {
+            transform: translateX(30px);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #0f3460;
+        }
+        
+        th {
+            color: #888;
+            font-weight: 500;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        tr:hover {
+            background: #1a2a4e;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status.pending_second {
+            background: #ffa500;
+            color: #000;
+        }
+        
+        .status.open {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .status.closed {
+            background: #888;
+            color: #fff;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦀 Polymarket Hedge Bot</h1>
+        
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-value {{ 'positive' if stats.total_pnl >= 0 else 'negative' }}">
+                    ${{ "%.2f"|format(stats.total_pnl) }}
+                </div>
+                <div class="stat-label">Total P&L (USDC)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">{{ stats.open_trades }}</div>
+                <div class="stat-label">Open Trades</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">{{ total_trades }}</div>
+                <div class="stat-label">Total Trades</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">${{ "%.0f"|format((settings.trade_amount|float) * 2) }}</div>
+                <div class="stat-label">Max Per Trade</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="toggle-container">
+                <div class="toggle {{ 'active' if stats.enabled else '' }}" id="toggle"></div>
+                <span id="status-text">{{ 'Running' if stats.enabled else 'Stopped' }}</span>
+            </div>
+            
+            <h2>⚙️ Settings</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>First Leg Price Range (Min - Max)</label>
+                    <div class="range-display">
+                        ${{ settings.first_leg_min_price }} - ${{ settings.first_leg_max_price }}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>First Leg Min Price</label>
+                    <input type="number" step="0.01" min="0" max="1" value="{{ settings.first_leg_min_price }}" id="first_leg_min_price">
+                </div>
+                <div class="form-group">
+                    <label>First Leg Max Price</label>
+                    <input type="number" step="0.01" min="0" max="1" value="{{ settings.first_leg_max_price }}" id="first_leg_max_price">
+                </div>
+                <div class="form-group">
+                    <label>Second Leg Price Change Threshold</label>
+                    <input type="number" step="0.01" min="0.01" max="1" value="{{ settings.second_leg_threshold }}" id="second_leg_threshold">
+                </div>
+                <div class="form-group">
+                    <label>Trade Amount (USDC per leg)</label>
+                    <input type="number" step="1" min="1" value="{{ settings.trade_amount }}" id="trade_amount">
+                </div>
+                <div class="form-group">
+                    <label>Max Concurrent Trades</label>
+                    <input type="number" step="1" min="1" max="20" value="{{ settings.max_concurrent_trades }}" id="max_concurrent_trades">
+                </div>
+                <div class="form-group">
+                    <label>Min Market Volume (24h)</label>
+                    <input type="number" step="1000" min="0" value="{{ settings.min_market_volume }}" id="min_market_volume">
+                </div>
+            </div>
+            <button onclick="saveSettings()">💾 Save Settings</button>
+        </div>
+        
+        <div class="card">
+            <h2>📊 Trade History & P&L</h2>
+            {% if trades %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Market</th>
+                        <th>First Leg</th>
+                        <th>Price</th>
+                        <th>Second Leg</th>
+                        <th>Price</th>
+                        <th>Total Spent</th>
+                        <th>Max Payout</th>
+                        <th>P&L</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr>
+                        <td>{{ trade.market[:40] }}...</td>
+                        <td>{{ trade.first_leg_outcome }}</td>
+                        <td>${{ "%.2f"|format(trade.first_leg_price) }}</td>
+                        <td>{{ trade.second_leg_outcome }}</td>
+                        <td>${{ "%.2f"|format(trade.second_leg_price) if trade.second_leg_price else '-' }}</td>
+                        <td>${{ "%.2f"|format(trade.total_spent) }}</td>
+                        <td>${{ "%.2f"|format(trade.max_payout) }}</td>
+                        <td class="{{ 'positive' if (trade.max_payout - trade.total_spent) >= 0 else 'negative' }}">
+                            ${{ "%.2f"|format(trade.max_payout - trade.total_spent) }}
+                        </td>
+                        <td><span class="status {{ trade.status }}">{{ trade.status }}</span></td>
+                        <td>{{ trade.created_at[:10] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">No trades yet. Enable the bot to start trading!</div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <script>
+        const toggle = document.getElementById('toggle');
+        toggle.addEventListener('click', async () => {
+            const response = await fetch('/api/toggle', { method: 'POST' });
+            const data = await response.json();
+            toggle.classList.toggle('active', data.enabled);
+            document.getElementById('status-text').textContent = data.enabled ? 'Running' : 'Stopped';
+        });
+        
+        async function saveSettings() {
+            const settings = {
+                first_leg_min_price: document.getElementById('first_leg_min_price').value,
+                first_leg_max_price: document.getElementById('first_leg_max_price').value,
+                second_leg_threshold: document.getElementById('second_leg_threshold').value,
+                trade_amount: document.getElementById('trade_amount').value,
+                max_concurrent_trades: document.getElementById('max_concurrent_trades').value,
+                min_market_volume: document.getElementById('min_market_volume').value
+            };
+            
+            const response = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            
+            if (response.ok) {
+                alert('Settings saved!');
+                location.reload();
+            }
+        }
+    </script>
+</body>
+</html>

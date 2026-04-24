@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  hedge-bot:
+    build: .
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      - DB_PATH=/app/data/hedge.db
+    restart: unless-stopped
