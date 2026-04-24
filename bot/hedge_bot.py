@@ -161,9 +161,16 @@ def get_open_trades_count():
     conn.close()
     return result['count'] if result else 0
 
-def get_active_markets():
-    """Fetch active markets from Polymarket Gamma API with pagination"""
+def get_active_markets(scan_window_hours=168):
+    """Fetch active markets from Polymarket Gamma API.
+    Only fetches markets expiring within scan_window_hours (default 7 days).
+    """
     import requests
+    from datetime import timezone, timedelta
+    
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
+    end_date_min = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+    end_date_max = (now + timedelta(hours=scan_window_hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
     
     headers = {"Accept": "application/json"}
     all_markets = []
@@ -172,8 +179,16 @@ def get_active_markets():
     
     try:
         while True:
-            url = f"https://gamma-api.polymarket.com/markets?closed=false&active=true&limit={limit}&offset={offset}"
-            response = requests.get(url, headers=headers, timeout=30)
+            params = {
+                'active': 'true',
+                'closed': 'false',
+                'limit': limit,
+                'offset': offset,
+                'end_date_min': end_date_min,
+                'end_date_max': end_date_max,
+            }
+            response = requests.get("https://gamma-api.polymarket.com/markets", 
+                                    params=params, headers=headers, timeout=30)
             
             if response.status_code != 200:
                 logger.error(f"Gamma API error: {response.status_code}")
@@ -185,13 +200,12 @@ def get_active_markets():
             
             all_markets.extend(batch)
             
-            # If batch is smaller than limit, we've got all markets
             if len(batch) < limit:
                 break
             
             offset += limit
         
-        logger.info(f"Fetched {len(all_markets)} total markets from Gamma API")
+        logger.info(f"Fetched {len(all_markets)} markets (expiring within {scan_window_hours}h)")
         return all_markets
         
     except Exception as e:
