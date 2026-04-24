@@ -234,13 +234,119 @@ class HedgeBot:
                 settings = get_settings()
                 if settings.get('enabled') == 'true':
                     self.scan_and_trade(settings)
+                    self.check_pending_second_legs(settings)
             except Exception as e:
                 logger.error(f"Error in bot loop: {e}")
             
             time.sleep(30)  # Scan every 30 seconds
     
+    def check_pending_second_legs(self, settings):
+        """Check pending second legs and place if threshold met"""
+        import requests
+        
+        try:
+            threshold = float(settings.get('second_leg_threshold', 0.02))
+            trade_amount = float(settings.get('trade_amount', 10.00))
+            
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM trades WHERE status = 'pending_second'
+            ''')
+            pending_trades = cursor.fetchall()
+            conn.close()
+            
+            if not pending_trades:
+                return
+            
+            # Get current prices for each pending trade
+            url = "https://clob.polymarket.com/markets?closed=false"
+            response = requests.get(url, headers={"Accept": "application/json"}, timeout=30)
+            
+            if response.status_code != 200:
+                return
+            
+            all_markets = response.json()
+            
+            for trade in pending_trades:
+                token = trade['token']
+                first_outcome = trade['first_leg_outcome']
+                first_price = trade['first_leg_price']
+                
+                # Find market
+                market_data = None
+                for m in all_markets:
+                    if m.get('conditionToken') == token:
+                        market_data = m
+                        break
+                
+                if not market_data:
+                    continue
+                
+                outcomes = market_data.get('outcomes', [])
+                prices = market_data.get('outcomePrices', [])
+                
+                if len(outcomes) != 2 or len(prices) != 2:
+                    continue
+                
+                # Find opposite outcome
+                try:
+                    price0 = float(prices[0])
+                    price1 = float(prices[1])
+                except:
+                    continue
+                
+                if outcomes[0] == first_outcome:
+                    second_outcome = outcomes[1]
+                    second_price = price1
+                else:
+                    second_outcome = outcomes[0]
+                    second_price = price0
+                
+                # Calculate price change
+                price_change = abs(second_price - first_price)
+                
+                if price_change >= threshold:
+                    # Place second leg
+                    self.place_second_leg(trade, second_outcome, second_price, trade_amount, settings)
+                    
+        except Exception as e:
+            logger.error(f"Error checking pending second legs: {e}")
+    
+    def place_second_leg(self, trade, outcome, price, amount, settings):
+        """Place the second leg of the hedge"""
+        import requests
+        
+        try:
+            shares = amount / price
+            trade_id = trade['id']
+            
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE trades SET 
+                    second_leg_outcome = ?,
+                    second_leg_price = ?,
+                    second_leg_shares = ?,
+                    second_leg_usdc = ?,
+                    status = 'open'
+                WHERE id = ?
+            ''', (outcome, price, shares, amount, trade_id))
+            conn.commit()
+            conn.close()
+            
+            log_trade_success(trade['market'], outcome, price, shares, amount)
+            logger.info(f"Second leg placed: {outcome} @ ${price}, trade_id={trade_id}")
+            
+            # TODO: Actually place the order on Polymarket
+            
+        except Exception as e:
+            logger.error(f"Error placing second leg: {e}")
+    
     def scan_and_trade(self, settings):
         """Scan markets and execute hedge strategy"""
+        import requests
+        
         open_count = get_open_trades_count()
         max_concurrent = int(settings.get('max_concurrent_trades', 5))
         
@@ -248,15 +354,100 @@ class HedgeBot:
             logger.info(f"Max concurrent trades reached: {open_count}/{max_concurrent}")
             return
         
-        markets = get_active_markets()
-        logger.info(f"Found {len(markets)} markets")
+        # Get settings
+        first_leg_min = float(settings.get('first_leg_min_price', 0.60))
+        first_leg_max = float(settings.get('first_leg_max_price', 0.70))
+        min_volume = float(settings.get('min_market_volume', 10000))
+        trade_amount = float(settings.get('trade_amount', 10.00))
         
-        # TODO: Filter and trade
-        # 1. Get markets with 2 outcomes
-        # 2. Check volume >= min_market_volume
-        # 3. Check if any side price in first leg range
-        # 4. Place first leg if conditions met
-        # 5. Monitor for second leg trigger
+        try:
+            # Fetch markets with condition info
+            url = "https://clob.polymarket.com/markets?closed=false"
+            headers = {"Accept": "application/json"}
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch markets: {response.status_code}")
+                return
+            
+            all_markets = response.json()
+            logger.info(f"Found {len(all_markets)} total markets")
+            
+            # Filter markets
+            for market in all_markets:
+                try:
+                    # Skip if not 2 outcomes
+                    outcomes = market.get('outcomes', [])
+                    if len(outcomes) != 2:
+                        continue
+                    
+                    # Check volume
+                    volume = float(market.get('volume24hr', 0) or 0)
+                    if volume < min_volume:
+                        continue
+                    
+                    # Get prices
+                    prices = market.get('outcomePrices', [])
+                    if not prices or len(prices) != 2:
+                        continue
+                    
+                    # Parse prices
+                    try:
+                        price0 = float(prices[0])
+                        price1 = float(prices[1])
+                    except:
+                        continue
+                    
+                    token = market.get('conditionToken', '')
+                    market_question = market.get('question', '')
+                    
+                    # Check if first leg is in range
+                    if first_leg_min <= price0 <= first_leg_max:
+                        outcome = outcomes[0]
+                        self.place_first_leg(market_question, token, outcome, price0, trade_amount, settings)
+                    elif first_leg_min <= price1 <= first_leg_max:
+                        outcome = outcomes[1]
+                        self.place_first_leg(market_question, token, outcome, price1, trade_amount, settings)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing market: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Error in scan_and_trade: {e}")
+    
+    def place_first_leg(self, market, token, outcome, price, amount, settings):
+        """Place the first leg of the hedge"""
+        import requests
+        
+        try:
+            # Calculate shares
+            shares = amount / price
+            
+            # Save trade to DB
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO trades (market, token, first_leg_outcome, first_leg_price, 
+                                   first_leg_shares, first_leg_usdc, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending_second')
+            ''', (market, token, outcome, price, shares, amount))
+            trade_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            # Log activity
+            log_trade_success(market, outcome, price, shares, amount)
+            log_limit_order(market, outcome, price, shares)
+            
+            logger.info(f"First leg placed: {outcome} @ ${price}, {shares} shares, trade_id={trade_id}")
+            
+            # TODO: Actually place the order on Polymarket
+            # For now, just log it - actual order placement requires proper wallet setup
+            
+        except Exception as e:
+            logger.error(f"Error placing first leg: {e}")
+            log_trade_failed(market, outcome, str(e))
 
 # Initialize
 init_db()
