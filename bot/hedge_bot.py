@@ -507,13 +507,7 @@ def index():
     
     # Get all trades with P&L
     cursor.execute('''
-        SELECT *, 
-            (first_leg_usdc + second_leg_usdc) as total_spent,
-            CASE 
-                WHEN first_leg_shares > second_leg_shares THEN first_leg_shares
-                ELSE second_leg_shares
-            END as max_payout
-        FROM trades
+        SELECT * FROM trades
         ORDER BY created_at DESC
         LIMIT 50
     ''')
@@ -529,10 +523,10 @@ def index():
     # Get stats
     cursor.execute('''
         SELECT 
-            COALESCE(SUM(first_leg_usdc + second_leg_usdc), 0) as total_spent,
+            COALESCE(SUM(COALESCE(first_leg_usdc,0) + COALESCE(second_leg_usdc,0)), 0) as total_spent,
             COALESCE(SUM(CASE 
-                WHEN first_leg_shares > second_leg_shares THEN first_leg_shares
-                ELSE second_leg_shares
+                WHEN COALESCE(first_leg_shares,0) > COALESCE(second_leg_shares,0) THEN first_leg_shares
+                ELSE COALESCE(second_leg_shares,0)
             END), 0) as total_payout
         FROM trades 
         WHERE status = 'closed'
