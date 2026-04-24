@@ -235,11 +235,36 @@ def index():
     
     conn.close()
     
+    # Get stats
+    cursor.execute('''
+        SELECT 
+            COALESCE(SUM(first_leg_usdc + second_leg_usdc), 0) as total_spent,
+            COALESCE(SUM(CASE 
+                WHEN first_leg_shares > second_leg_shares THEN first_leg_shares
+                ELSE second_leg_shares
+            END), 0) as total_payout
+        FROM trades 
+        WHERE status = 'closed'
+    ''')
+    result = cursor.fetchone()
+    total_spent = result['total_spent'] or 0
+    total_payout = result['total_payout'] or 0
+    total_pnl = total_payout - total_spent
+    
+    stats = {
+        'enabled': settings.get('enabled') == 'true',
+        'open_trades': open_trades,
+        'max_concurrent': settings.get('max_concurrent_trades'),
+        'total_pnl': total_pnl,
+        'total_spent': total_spent
+    }
+    
     return render_template('index.html', 
                          settings=settings, 
                          trades=trades,
                          total_trades=total_trades,
-                         open_trades=open_trades)
+                         open_trades=open_trades,
+                         stats=stats)
 
 @app.route('/api/settings', methods=['POST'])
 def api_settings():
