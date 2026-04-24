@@ -12,7 +12,7 @@ from flask import Flask, render_template, jsonify, request
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='/app/templates')
 
 # Configuration
 HOST = "0.0.0.0"
